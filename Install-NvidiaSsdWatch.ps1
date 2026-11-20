@@ -41,10 +41,15 @@ if ($PSVersionTable.PSEdition -ne 'Desktop' -and $PSVersionTable.PSVersion.Major
 if (-not $IsWindows -and $PSVersionTable.PSVersion.Major -ge 6 -and $env:OS -ne 'Windows_NT') {
     throw "This watchdog is Windows-only (it reads Windows perf counters and uses Task Scheduler)."
 }
-if (-not (Test-Path 'C:\ProgramData\NVIDIA Corporation') -and
+if (-not (Test-Path (Join-Path $env:ProgramData 'NVIDIA Corporation')) -and
     -not (Get-Process -Name 'NVDisplay.Container' -ErrorAction SilentlyContinue)) {
     Write-Warning "No NVIDIA install detected on this machine. Installing anyway; the monitor will exit with code 5 until NVIDIA software is present."
 }
+
+# Resolve PowerShell from %SystemRoot% rather than PATH, so the task works when Windows is
+# installed on a drive other than C: and regardless of PATH customisation.
+$psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+if (-not (Test-Path -LiteralPath $psExe)) { $psExe = 'powershell.exe' }
 
 $source = Join-Path $PSScriptRoot 'Monitor-NvLogWrites.ps1'
 if (-not (Test-Path -LiteralPath $source)) {
@@ -64,7 +69,7 @@ Write-Step "[2/4] Checking notification support"
 if ($NoToastTest) {
     "      skipped (-NoToastTest)"
 } else {
-    $toastResult = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $target -TestToast -DataDir $DataDir
+    $toastResult = & $psExe -NoProfile -ExecutionPolicy Bypass -File $target -TestToast -DataDir $DataDir
     "      -> $toastResult"
     if ($toastResult -notmatch 'True') {
         Write-Warning "Toast notification failed. Alerts will still be written to $DataDir\last-alert.txt, but you will not get a popup."
@@ -73,7 +78,7 @@ if ($NoToastTest) {
 
 # ---- task -----------------------------------------------------------------
 Write-Step "[3/4] Registering scheduled task '$TaskName' (every $IntervalMinutes min)"
-$tr = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $target + '" -DataDir "' + $DataDir + '"'
+$tr = '"' + $psExe + '" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $target + '" -DataDir "' + $DataDir + '"'
 & schtasks.exe /Create /F /TN $TaskName /SC MINUTE /MO $IntervalMinutes /TR $tr | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "schtasks failed to create '$TaskName' (exit $LASTEXITCODE)." }
 
@@ -83,7 +88,7 @@ Set-ScheduledTask -TaskName $TaskName -Settings $settings | Out-Null
 
 # ---- first run ------------------------------------------------------------
 Write-Step "[4/4] Running once to establish a baseline"
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $target -DataDir $DataDir
+& $psExe -NoProfile -ExecutionPolicy Bypass -File $target -DataDir $DataDir
 $first = $LASTEXITCODE
 
 $info = Get-ScheduledTaskInfo -TaskName $TaskName

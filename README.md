@@ -10,6 +10,21 @@ Reports upstream: [TechPowerUp](https://www.techpowerup.com/354996/latest-nvidia
 Because the bug is intermittent — many people on the affected driver see nothing at all —
 this runs on a schedule and only speaks up when the write rate actually misbehaves.
 
+## Portability
+
+Nothing assumes `C:\`, `C:\Program Files`, a particular user name, or an English Windows.
+Every path resolves through environment variables:
+
+| Variable | Used for | Correct when |
+|---|---|---|
+| `%ProgramData%` | locating `nvlog.nvlgstg` | Windows itself is installed on `D:` or elsewhere |
+| `%LOCALAPPDATA%` | state, history, deployed script | profiles are redirected or roam |
+| `%SystemRoot%` | PowerShell executable in the scheduled task | drive letters differ from the default |
+
+Numbers are formatted with the invariant culture, so the CSV stays parsable on a German,
+Czech or French Windows where the decimal separator is a comma. Status values and the
+thresholds themselves are locale-independent.
+
 ## Requirements
 
 - Windows 10 or 11
@@ -68,7 +83,7 @@ fastest first:
    container rather than the driver core, and removing the app stopped the writes for several people.
 4. **Interim measures** — turn off Instant Replay and the in-game overlay; or stop the
    `NVDisplay.ContainerLocalSystem` service, delete
-   `C:\ProgramData\NVIDIA Corporation\nvtopps\nct\nvlog.nvlgstg`, then start the service again.
+   `%ProgramData%\NVIDIA Corporation\nvtopps\nct\nvlog.nvlgstg`, then start the service again.
 
 Turn the watchdog off while you work on it, then turn it back on to confirm the fix:
 

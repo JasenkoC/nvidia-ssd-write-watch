@@ -40,9 +40,14 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$ScriptVersion = '2.1'
+$ScriptVersion = '2.2'
 
-$DefaultNvLog = 'C:\ProgramData\NVIDIA Corporation\nvtopps\nct\nvlog.nvlgstg'
+# Invariant culture so decimal separators stay '.' in the CSV and alert text regardless of
+# the machine's regional settings (a German or Czech Windows would otherwise write '1,5').
+[System.Threading.Thread]::CurrentThread.CurrentCulture   = [Globalization.CultureInfo]::InvariantCulture
+[System.Threading.Thread]::CurrentThread.CurrentUICulture = [Globalization.CultureInfo]::InvariantCulture
+
+$DefaultNvLog = Join-Path $env:ProgramData 'NVIDIA Corporation\nvtopps\nct\nvlog.nvlgstg'
 $ProjectUrl   = 'https://github.com/JasenkoC/nvidia-ssd-write-watch'
 $StatePath    = Join-Path $DataDir 'state.json'
 $CsvPath      = Join-Path $DataDir 'history.csv'
@@ -101,7 +106,7 @@ try {
         if (Test-Path -LiteralPath $DefaultNvLog) {
             $NvLogPath = $DefaultNvLog
         } else {
-            $found = Get-ChildItem 'C:\ProgramData\NVIDIA Corporation' -Recurse -Filter 'nvlog.nvlgstg' `
+            $found = Get-ChildItem (Join-Path $env:ProgramData 'NVIDIA Corporation') -Recurse -Filter 'nvlog.nvlgstg' `
                 -File -Force -ErrorAction SilentlyContinue | Select-Object -First 1
             if ($found) { $NvLogPath = $found.FullName }
         }
@@ -167,8 +172,14 @@ try {
             $status = 'SHORT'; $exitCode = 0
         }
         elseif ($matchedPids -eq 0) {
-            # Every container restarted between runs: rate is unknowable, fall back to file growth.
-            $status = 'RESTARTED'; $exitCode = 0
+            # No counters could be paired: either the containers restarted, or this is a
+            # driver-only install with no display container. Fall back to log growth so
+            # those machines are still watched instead of silently reporting nothing.
+            if (($logDelta / 1MB) -ge $AlertNvlogGrowthMb) {
+                $status = 'ALERT'; $exitCode = 2
+            } else {
+                $status = 'RESTARTED'; $exitCode = 0
+            }
         }
         elseif ($mbPerHour -ge $AlertMbPerHour -or ($logDelta / 1MB) -ge $AlertNvlogGrowthMb) {
             $status = 'ALERT'; $exitCode = 2
@@ -234,7 +245,7 @@ HOW TO STOP THE WRITES  (fastest first)
      the app's display container rather than the driver core.
   4. Interim: turn off Instant Replay and the in-game overlay, or stop the
      'NVIDIA Display Container LS' service, delete
-     C:\ProgramData\NVIDIA Corporation\nvtopps\nct\nvlog.nvlgstg,
+     $env:ProgramData\NVIDIA Corporation\nvtopps\nct\nvlog.nvlgstg,
      then start the service again.
 
 TURN THIS WATCHDOG OFF WHILE YOU WORK
