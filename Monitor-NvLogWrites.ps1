@@ -20,6 +20,10 @@
 .PARAMETER DataDir
     Where state/history/logs are kept. Defaults to %LOCALAPPDATA%\NvidiaSsdWatch.
 
+.PARAMETER AffectedMaxDriverVersion
+    Highest NVIDIA driver version known to be affected. A newer version triggers a one-time
+    obsolescence notice suggesting uninstall. Default: 621.24.
+
 .EXAMPLE
     .\Monitor-NvLogWrites.ps1
     .\Monitor-NvLogWrites.ps1 -AlertMbPerHour 100 -NoToast
@@ -35,12 +39,13 @@ param(
     [double]$WarnMbPerHour      = 50,
     [double]$AlertNvlogGrowthMb = 1024,
     [double]$MinGapMinutes      = 5,
+    [string]$AffectedMaxDriverVersion = '621.24',
     [switch]$NoToast,
     [switch]$TestToast
 )
 
 $ErrorActionPreference = 'Stop'
-$ScriptVersion = '2.4'
+$ScriptVersion = '2.6'
 
 # Invariant culture so decimal separators stay '.' in the CSV and alert text regardless of
 # the machine's regional settings (a German or Czech Windows would otherwise write '1,5').
@@ -89,6 +94,20 @@ function Format-Bytes {
     if ($Bytes -ge 1GB) { return ('{0:N1} GB' -f ($Bytes / 1GB)) }
     if ($Bytes -ge 1MB) { return ('{0:N0} MB' -f ($Bytes / 1MB)) }
     return ('{0:N0} KB' -f ($Bytes / 1KB))
+}
+
+function Get-NvidiaDriverVersion {
+    # nvidia-smi reports the marketing version ("621.24"). It is absent on machines
+    # with no NVIDIA driver, in which case the obsolescence check is simply skipped.
+    try {
+        $smi = Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue
+        if (-not $smi) { return $null }
+        $out = & $smi.Source --query-gpu=driver_version --format=csv,noheader 2>$null
+        if ($LASTEXITCODE -ne 0 -or -not $out) { return $null }
+        $first = @($out)[0]
+        if ($first) { return ([string]$first).Trim() }
+    } catch { }
+    return $null
 }
 
 if ($TestToast) {
@@ -192,6 +211,21 @@ try {
         }
     }
 
+    # ---- obsolescence: has a newer driver appeared? -----------------------
+    # A version above the last known-affected one means the bug is probably fixed and
+    # this watchdog has done its job. Notified once per driver version, never auto-removed.
+    $driverVersion   = Get-NvidiaDriverVersion
+    $obsoleteVersion = $null
+    $vInstalled = [version]'0.0'
+    $vAffected  = [version]'0.0'
+    if ($driverVersion -and
+        [version]::TryParse($driverVersion, [ref]$vInstalled) -and
+        [version]::TryParse($AffectedMaxDriverVersion, [ref]$vAffected) -and
+        $vInstalled -gt $vAffected) {
+        $obsoleteVersion = $driverVersion
+    }
+    $alreadyNotified = if ($prev) { $prev.ObsoleteNotified } else { $null }
+
     # ---- persist ----------------------------------------------------------
     if (-not (Test-Path -LiteralPath $CsvPath)) {
         Set-Content -LiteralPath $CsvPath -Value 'Timestamp,ElapsedMin,GapHours,NvWriteBytesDelta,MBperHour,NvlogBytes,NvlogDelta,Touched,MatchedPids,Status' -Encoding UTF8
@@ -202,18 +236,50 @@ try {
     Add-Content -LiteralPath $CsvPath -Value $csvLine -Encoding UTF8
 
     $state = [pscustomobject]@{
-        Version     = $ScriptVersion
-        TimeUtc     = $now.ToString('o')
-        Pids        = $current
-        LogPath     = $NvLogPath
-        LogSize     = $logSize
-        LogWriteUtc = [string]$logWrite
-        Status      = $status
+        Version          = $ScriptVersion
+        TimeUtc          = $now.ToString('o')
+        Pids             = $current
+        LogPath          = $NvLogPath
+        LogSize          = $logSize
+        LogWriteUtc      = [string]$logWrite
+        Status           = $status
+        DriverVersion    = $driverVersion
+        ObsoleteNotified = $(if ($obsoleteVersion) { $obsoleteVersion } else { $alreadyNotified })
     }
     $state | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $StatePath -Encoding UTF8
 
-    Write-RunLog ("status={0} mbPerHour={1:N2} deltaBytes={2} gapMin={3:N1} nvlog={4} logDelta={5} touched={6} pids={7}" -f `
-        $status, $mbPerHour, $deltaBytes, $gapMinutes, $logSize, $logDelta, $logTouched, $matchedPids)
+    Write-RunLog ("status={0} mbPerHour={1:N2} deltaBytes={2} gapMin={3:N1} nvlog={4} logDelta={5} touched={6} pids={7} driver={8}" -f `
+        $status, $mbPerHour, $deltaBytes, $gapMinutes, $logSize, $logDelta, $logTouched, $matchedPids, $driverVersion)
+
+    if ($obsoleteVersion -and $obsoleteVersion -ne $alreadyNotified) {
+        $notice = @"
+{0}  DRIVER UPDATED - WATCHDOG OBSOLETE
+
+Detected NVIDIA driver {1}, which is newer than the last known affected version {2}.
+
+If this driver contains NVIDIA's fix for the nvlog.nvlgstg write loop, this watchdog is
+no longer needed. Confirm before removing it: let two or three scheduled samples land and
+check that they report OK with a near-zero rate.
+
+  Get-Content "$CsvPath" -Tail 5
+
+Then uninstall:
+
+  powershell -ExecutionPolicy Bypass -File .\Uninstall-NvidiaSsdWatch.ps1
+
+Keeping it running is harmless - just noise - but a WARN caused by a future driver's
+ordinary logging would send you chasing a bug that no longer exists.
+
+Reported affected versions: 621.14 and 621.24.
+"@ -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $obsoleteVersion, $AffectedMaxDriverVersion
+
+        Set-Content -LiteralPath (Join-Path $DataDir 'obsolete-notice.txt') -Value $notice -Encoding UTF8
+        Write-RunLog ("obsolete: driver {0} is newer than {1}" -f $obsoleteVersion, $AffectedMaxDriverVersion)
+        if (-not $NoToast) {
+            [void](Send-Toast -Title "NVIDIA driver $obsoleteVersion detected" `
+                -Body "Newer than the affected $AffectedMaxDriverVersion - this watchdog is probably no longer needed. See obsolete-notice.txt to uninstall.")
+        }
+    }
 
     # ---- alert ------------------------------------------------------------
     if ($status -eq 'ALERT') {

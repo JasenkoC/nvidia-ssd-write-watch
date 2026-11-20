@@ -10,6 +10,11 @@ Reports upstream: [TechPowerUp](https://www.techpowerup.com/354996/latest-nvidia
 Because the bug is intermittent — many people on the affected driver see nothing at all —
 this runs on a schedule and only speaks up when the write rate actually misbehaves.
 
+> **Temporary workaround.** This tool only matters while the affected driver versions
+> (621.14 / 621.24) are installed. Once NVIDIA ships a driver that fixes the bug, it becomes
+> obsolete and should be removed — see
+> [When this becomes obsolete](#when-this-becomes-obsolete).
+
 ## Portability
 
 Nothing assumes `C:\`, `C:\Program Files`, a particular user name, or an English Windows.
@@ -100,6 +105,47 @@ schtasks /Run  /TN "NVIDIA-SSD-WriteWatch"   # resume / re-check
 ```
 
 Leaving it disabled is the one thing not to do — the whole point is to catch this if it comes back.
+
+## When this becomes obsolete
+
+**This is a temporary workaround, not a permanent tool.** The bug lives in the NVIDIA
+GeForce 621.14 / 621.24 display container, and NVIDIA is expected to fix it in a driver
+release. Once a fixed driver is installed there is nothing left to catch, and the watchdog
+should be removed.
+
+Check what you are running:
+
+```powershell
+nvidia-smi --query-gpu=driver_version --format=csv,noheader
+```
+
+| Driver version | What to do |
+|---|---|
+| **621.14 or 621.24** | Keep the watchdog running |
+| **621.01** (older, unaffected) | Harmless — it will just report `OK`, or uninstall it |
+| **Newer than 621.24**, with the fix in its release notes | Remove the watchdog, after confirming |
+
+Don't uninstall on the version number alone. After installing the fixed driver, let two or
+three samples land and check that they report `OK` with a near-zero rate:
+
+```powershell
+Get-Content "$env:LOCALAPPDATA\NvidiaSsdWatch\history.csv" -Tail 5
+```
+
+Then remove it:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Uninstall-NvidiaSsdWatch.ps1
+```
+
+A stale watchdog is not dangerous, only noise — but a `WARN` triggered by some future
+driver's ordinary logging would have you chasing a bug that no longer exists.
+
+**It also tells you when that day arrives.** Every run reads the installed driver with
+`nvidia-smi --query-gpu=driver_version`. If the version is newer than the last known
+affected one (`621.24` by default, override with `-AffectedMaxDriverVersion`), the watchdog
+writes `obsolete-notice.txt` and shows a **one-time** notification reminding you to uninstall.
+It never removes itself and never repeats the notice for the same driver version.
 
 ## Checking on it
 
