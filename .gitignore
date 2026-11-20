@@ -1,0 +1,14 @@
+# release artefacts — attach to GitHub releases instead of committing
+*.zip
+
+# local monitoring output, if anyone runs the script with -DataDir .
+state.json
+history.csv
+watch.log
+last-alert.txt
+
+# editors / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
