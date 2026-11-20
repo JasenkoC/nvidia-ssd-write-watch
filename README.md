@@ -44,6 +44,13 @@ powershell -ExecutionPolicy Bypass -File .\Install-NvidiaSsdWatch.ps1
 sends a test notification, and registers a scheduled task called
 `NVIDIA-SSD-WriteWatch` that samples every 30 minutes. It is idempotent — re-run it to upgrade.
 
+**It runs with no visible window.** The task launches the monitor through a generated
+`run-hidden.vbs`, because Task Scheduler would otherwise open a console window each run —
+and with Windows Terminal as the default console host, `-WindowStyle Hidden` still flashes a
+Terminal window before PowerShell can hide it. `wscript.exe` is a GUI-subsystem host, so no
+window is ever created. If VBScript has been removed or blocked by policy, the installer
+detects this and falls back to a plain PowerShell action (which may flash).
+
 Files must stay together as a set: `Install-NvidiaSsdWatch.ps1` looks for
 `Monitor-NvLogWrites.ps1` in its own folder.
 
@@ -136,6 +143,7 @@ powershell -ExecutionPolicy Bypass -File .\Uninstall-NvidiaSsdWatch.ps1 -KeepDat
 | `Monitor-NvLogWrites.ps1` | The sampler. Safe to run by hand at any time. |
 | `Install-NvidiaSsdWatch.ps1` | Deploys the monitor and registers the task. |
 | `Uninstall-NvidiaSsdWatch.ps1` | Removes task and data. |
+| `run-hidden.vbs` | Generated at install time; launches the monitor with no window. |
 
 ## Licence
 
