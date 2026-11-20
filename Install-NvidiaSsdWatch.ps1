@@ -78,13 +78,18 @@ if ($NoToastTest) {
 
 # ---- task -----------------------------------------------------------------
 Write-Step "[3/4] Registering scheduled task '$TaskName' (every $IntervalMinutes min)"
-$tr = '"' + $psExe + '" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $target + '" -DataDir "' + $DataDir + '"'
-& schtasks.exe /Create /F /TN $TaskName /SC MINUTE /MO $IntervalMinutes /TR $tr | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "schtasks failed to create '$TaskName' (exit $LASTEXITCODE)." }
+$argLine = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $target + '" -DataDir "' + $DataDir + '"'
 
+# Register-ScheduledTask handles spaces in paths correctly; schtasks /TR does not
+# (it re-parses the argument string, breaking any quoted path containing a space).
+$action   = New-ScheduledTaskAction -Execute $psExe -Argument $argLine
+$trigger  = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
+    -RepetitionInterval (New-TimeSpan -Minutes $IntervalMinutes) `
+    -RepetitionDuration (New-TimeSpan -Days 3650)
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable `
     -ExecutionTimeLimit (New-TimeSpan -Minutes 10) -MultipleInstances IgnoreNew
-Set-ScheduledTask -TaskName $TaskName -Settings $settings | Out-Null
+Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings `
+    -Description 'Watches for the NVIDIA 621.14/621.24 nvlog.nvlgstg excessive-SSD-write bug.' -Force | Out-Null
 
 # ---- first run ------------------------------------------------------------
 Write-Step "[4/4] Running once to establish a baseline"

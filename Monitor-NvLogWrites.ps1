@@ -40,7 +40,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$ScriptVersion = '2.2'
+$ScriptVersion = '2.3'
 
 # Invariant culture so decimal separators stay '.' in the CSV and alert text regardless of
 # the machine's regional settings (a German or Czech Windows would otherwise write '1,5').
