@@ -40,9 +40,10 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$ScriptVersion = '2.0'
+$ScriptVersion = '2.1'
 
 $DefaultNvLog = 'C:\ProgramData\NVIDIA Corporation\nvtopps\nct\nvlog.nvlgstg'
+$ProjectUrl   = 'https://github.com/JasenkoC/nvidia-ssd-write-watch'
 $StatePath    = Join-Path $DataDir 'state.json'
 $CsvPath      = Join-Path $DataDir 'history.csv'
 $AlertPath    = Join-Path $DataDir 'last-alert.txt'
@@ -76,6 +77,13 @@ function Send-Toast {
         Write-RunLog ("Toast failed: {0}" -f $_.Exception.Message)
         return $false
     }
+}
+
+function Format-Bytes {
+    param([double]$Bytes)
+    if ($Bytes -ge 1GB) { return ('{0:N1} GB' -f ($Bytes / 1GB)) }
+    if ($Bytes -ge 1MB) { return ('{0:N0} MB' -f ($Bytes / 1MB)) }
+    return ('{0:N0} KB' -f ($Bytes / 1KB))
 }
 
 if ($TestToast) {
@@ -198,11 +206,50 @@ try {
 
     # ---- alert ------------------------------------------------------------
     if ($status -eq 'ALERT') {
-        $body = ('NVDisplay.Container wrote {0:N0} MB in {1:N0} min ({2:N0} MB/h). nvlog.nvlgstg is {3:N1} MB. See {4}' -f `
-            ($deltaBytes / 1MB), $gapMinutes, $mbPerHour, (($logSize) / 1MB), $CsvPath)
-        $msg = ('{0}  ALERT: {1}' -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $body)
-        Set-Content -LiteralPath $AlertPath -Value $msg -Encoding UTF8
-        if (-not $NoToast) { [void](Send-Toast -Title 'NVIDIA SSD watchdog: excessive writes' -Body $body) }
+        $humanDelta = Format-Bytes $deltaBytes
+        $humanRate  = if ($mbPerHour -ge 1024) { '{0:N1} GB/h' -f ($mbPerHour / 1024) } else { '{0:N0} MB/h' -f $mbPerHour }
+
+        # Toast is intentionally short: it names the symptom and the two fastest remedies.
+        $toastBody = ('{0} in {1:N0} min ({2}). To stop: update the NVIDIA driver, or roll back to 621.01. Details in last-alert.txt' -f `
+            $humanDelta, $gapMinutes, $humanRate)
+
+        # The file carries the full runbook, so the information survives the toast disappearing.
+        $alertText = @"
+{0}  ALERT  (watchdog v{1})
+
+NVDisplay.Container wrote {2} in {3:N0} minutes ({4}).
+nvlog.nvlgstg is currently {5}.
+Threshold: {6:N0} MB/h.
+
+WHAT THIS MEANS
+  Something in the NVIDIA display container is rewriting nvlog.nvlgstg
+  continuously. This is the signature of the GeForce 621.14 / 621.24 bug,
+  which has been reported to add up to 30 GB/hour of SSD writes at idle.
+
+HOW TO STOP THE WRITES  (fastest first)
+  1. Update the NVIDIA driver, if a build newer than 621.24 is available.
+  2. Roll back to 621.01 - the last version reported clean (under 2 MB per
+     5 minutes of idle writes).
+  3. Remove the NVIDIA App, keeping the display driver. Reports point at
+     the app's display container rather than the driver core.
+  4. Interim: turn off Instant Replay and the in-game overlay, or stop the
+     'NVIDIA Display Container LS' service, delete
+     C:\ProgramData\NVIDIA Corporation\nvtopps\nct\nvlog.nvlgstg,
+     then start the service again.
+
+TURN THIS WATCHDOG OFF WHILE YOU WORK
+  schtasks /End /TN "NVIDIA-SSD-WriteWatch"
+  (re-enable with: schtasks /Run /TN "NVIDIA-SSD-WriteWatch")
+
+Full history : {7}
+Project      : {8}
+
+"@ -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $ScriptVersion, $humanDelta, $gapMinutes,
+       $humanRate, $(if ($null -ne $logSize) { Format-Bytes $logSize } else { 'not found' }),
+       $AlertMbPerHour, $CsvPath, $ProjectUrl
+
+        Set-Content -LiteralPath $AlertPath -Value $alertText -Encoding UTF8
+        if (-not $NoToast) { [void](Send-Toast -Title 'NVIDIA SSD write bug detected' -Body $toastBody) }
     }
 
     Write-Output ("{0} | {1} | {2:N2} MB/h | {3:N0} MB over {4:N0} min | nvlog {5} bytes" -f `

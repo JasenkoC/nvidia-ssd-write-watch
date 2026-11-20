@@ -50,6 +50,35 @@ the file while generating gigabytes of I/O. File-size monitoring alone would mis
 Typical healthy system: ~0–20 MB/h. Affected systems: 1,000–30,000 MB/h.
 Both thresholds are configurable parameters on `Monitor-NvLogWrites.ps1`.
 
+## If it alerts
+
+The toast is deliberately short — it names the symptom and the two fastest remedies. The full
+runbook is written to `%LOCALAPPDATA%\NvidiaSsdWatch\last-alert.txt`, so the guidance survives
+the notification disappearing:
+
+> **ALERT** NVDisplay.Container wrote 4,096 MB in 30 minutes (8,192 MB/h).
+
+That means something in the NVIDIA display container is rewriting `nvlog.nvlgstg` continuously.
+It can add up to 30 GB/hour of SSD writes while the machine sits idle. Stop the writes,
+fastest first:
+
+1. **Update the NVIDIA driver** — if a build newer than 621.24 exists, install it.
+2. **Roll back to 621.01** — the last version reported clean (under 2 MB per 5 minutes idle).
+3. **Remove the NVIDIA App**, keeping the display driver. Reports point at the app's display
+   container rather than the driver core, and removing the app stopped the writes for several people.
+4. **Interim measures** — turn off Instant Replay and the in-game overlay; or stop the
+   `NVDisplay.ContainerLocalSystem` service, delete
+   `C:\ProgramData\NVIDIA Corporation\nvtopps\nct\nvlog.nvlgstg`, then start the service again.
+
+Turn the watchdog off while you work on it, then turn it back on to confirm the fix:
+
+```powershell
+schtasks /End  /TN "NVIDIA-SSD-WriteWatch"   # pause
+schtasks /Run  /TN "NVIDIA-SSD-WriteWatch"   # resume / re-check
+```
+
+Leaving it disabled is the one thing not to do — the whole point is to catch this if it comes back.
+
 ## Checking on it
 
 ```powershell
@@ -72,7 +101,7 @@ powershell -ExecutionPolicy Bypass -File .\Uninstall-NvidiaSsdWatch.ps1
 powershell -ExecutionPolicy Bypass -File .\Uninstall-NvidiaSsdWatch.ps1 -KeepData
 ```
 
-## Cavices
+## Caveats
 
 - **Toasts can be muted** by Focus Assist / Do Not Disturb. `history.csv` and
   `last-alert.txt` are the durable record.
