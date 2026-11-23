@@ -270,7 +270,7 @@ Then uninstall:
 Keeping it running is harmless - just noise - but a WARN caused by a future driver's
 ordinary logging would send you chasing a bug that no longer exists.
 
-Reported affected versions: 621.14 and 621.24.
+Reported affected versions: 621.14 and 621.24. Fixed in 621.35.
 "@ -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $obsoleteVersion, $AffectedMaxDriverVersion
 
         Set-Content -LiteralPath (Join-Path $DataDir 'obsolete-notice.txt') -Value $notice -Encoding UTF8
